@@ -2,46 +2,28 @@
 #include "cursor_scaler.h"
 #include "config.h"
 
-// 静态成员定义
 CursorAnimator* CursorAnimator::s_instance = nullptr;
 
-// ---------------------------------------------------------------------------
-// Initialize
-// ---------------------------------------------------------------------------
 void CursorAnimator::Initialize(CursorScaler* scaler, HWND notifyWnd)
 {
     m_scaler    = scaler;
     m_notifyWnd = notifyWnd;
     s_instance  = this;
 
-    // 定时器回调只做 PostMessage，不直接操作光标，避免线程竞争
     CreateTimerQueueTimer(
-        &m_timer,
-        NULL,
-        TimerCallback,
-        nullptr,
-        Config::TIMER_INTERVAL,
-        Config::TIMER_INTERVAL,
-        WT_EXECUTEDEFAULT
-    );
+        &m_timer, NULL, TimerCallback, nullptr,
+        Config::TIMER_INTERVAL, Config::TIMER_INTERVAL,
+        WT_EXECUTEDEFAULT);
 }
 
-// ---------------------------------------------------------------------------
-// Shutdown
-// ---------------------------------------------------------------------------
 void CursorAnimator::Shutdown()
 {
-    if (m_timer != nullptr)
-    {
-        // NULL 作为完成事件：不阻塞等待（避免在主线程 Shutdown 时死锁）
+    if (m_timer) {
         DeleteTimerQueueTimer(NULL, m_timer, NULL);
         m_timer = nullptr;
     }
-
-    if (m_state != State::IDLE && m_scaler != nullptr)
-    {
+    if (m_state != State::IDLE && m_scaler)
         m_scaler->RestoreCursors();
-    }
 
     m_state     = State::IDLE;
     m_factor    = 1.0f;
@@ -49,9 +31,6 @@ void CursorAnimator::Shutdown()
     s_instance  = nullptr;
 }
 
-// ---------------------------------------------------------------------------
-// EaseOut — 缓出三次方，起始段慢、结尾收缩自然
-// ---------------------------------------------------------------------------
 float CursorAnimator::EaseOut(float t)
 {
     float inv   = 1.0f - t;
@@ -60,19 +39,27 @@ float CursorAnimator::EaseOut(float t)
 }
 
 // ---------------------------------------------------------------------------
-// TriggerAnimation — 在主线程调用，立即应用峰值，进入 HOLDING
+// TriggerAnimation
+// 触发时先做一次性预计算（PrepareAnimation），成功后立即显示峰值帧
 // ---------------------------------------------------------------------------
 void CursorAnimator::TriggerAnimation()
 {
+    // 每次触发都重新预计算（确保拿到当前最新的光标样式）
+    // PrepareAnimationAsync 只同步计算峰值帧（极快），其余帧后台异步完成
+    if (!m_scaler->PrepareAnimationAsync()) {
+        return;  // 极罕见失败，静默忽略
+    }
+
     m_startTime = GetTickCount();
     m_factor    = Config::MAX_SCALE_FACTOR;
     m_state     = State::HOLDING;
-    m_scaler->ApplyScale(Config::MAX_SCALE_FACTOR);
+
+    // 立即显示峰值帧（帧 0 已同步计算完毕）
+    m_scaler->ApplyFrame(0);
 }
 
 // ---------------------------------------------------------------------------
-// Tick — 由主线程消息循环响应 WM_ANIM_TICK 调用
-// 所有状态读写和 SetSystemCursor 调用都在主线程，无竞争
+// Tick — 主线程执行，动画阶段直接查帧缓存，零计算开销
 // ---------------------------------------------------------------------------
 void CursorAnimator::Tick()
 {
@@ -82,47 +69,39 @@ void CursorAnimator::Tick()
 
     if (m_state == State::HOLDING)
     {
-        if (elapsed >= Config::HOLD_DURATION)
-        {
+        if (elapsed >= Config::HOLD_DURATION) {
             m_startTime = GetTickCount();
             m_state     = State::SHRINKING;
         }
-        return;  // HOLDING 阶段不更新光标
+        return;
     }
 
-    // SHRINKING 阶段
+    // SHRINKING
     elapsed = GetTickCount() - m_startTime;
     float t = static_cast<float>(elapsed) / static_cast<float>(Config::SHRINK_DURATION);
 
-    if (t >= 1.0f)
-    {
+    if (t >= 1.0f) {
         m_factor = 1.0f;
         m_state  = State::IDLE;
-        m_scaler->RestoreCursors();
+        m_scaler->RestoreCursors();  // 同时清空帧缓存，下次触发重新预计算
         return;
     }
 
     m_factor = EaseOut(t);
-    m_scaler->ApplyScale(m_factor);
+
+    // 查表：把 factor 映射到帧索引，直接 SetSystemCursor，无任何像素运算
+    int frameIdx = m_scaler->FactorToFrame(m_factor);
+    m_scaler->ApplyFrame(frameIdx);
 }
 
-// ---------------------------------------------------------------------------
-// IsAnimating
-// ---------------------------------------------------------------------------
 bool CursorAnimator::IsAnimating() const
 {
     return m_state != State::IDLE;
 }
 
-// ---------------------------------------------------------------------------
-// TimerCallback — 线程池线程调用，只 PostMessage，不接触任何共享状态
-// ---------------------------------------------------------------------------
-VOID CALLBACK CursorAnimator::TimerCallback(PVOID /*lpParameter*/, BOOLEAN /*timerOrWaitFired*/)
+VOID CALLBACK CursorAnimator::TimerCallback(PVOID, BOOLEAN)
 {
     CursorAnimator* self = s_instance;
     if (self && self->m_notifyWnd)
-    {
-        // PostMessage 是线程安全的，投递到主线程消息队列后立即返回
         PostMessageW(self->m_notifyWnd, WM_ANIM_TICK, 0, 0);
-    }
 }

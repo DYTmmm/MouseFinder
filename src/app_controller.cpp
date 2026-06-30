@@ -44,8 +44,7 @@ bool AppController::Initialize(HINSTANCE hInstance)
     if (!m_hwnd)
         return false;
 
-    // ── 捕获系统光标原始句柄 ─────────────────────────────────────────
-    m_scaler.CaptureCurrentCursors();
+    // ── 捕获系统光标（方案 C：按需预计算，此处无需初始化） ───────────────
 
     // ── 初始化动画模块 ────────────────────────────────────────────────
     m_animator.Initialize(&m_scaler, m_hwnd);

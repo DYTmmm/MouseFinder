@@ -2,32 +2,73 @@
 
 #include <windows.h>
 #include <vector>
+#include <atomic>
 
-// CursorScaler — 光标缩放引擎
-// 负责捕获系统光标原始句柄、对位图执行 GDI 缩放，并通过 SetSystemCursor 替换系统光标。
+// CursorScaler — 方案 C 优化版
+//
+// 改进点：
+//   1. 系统默认光标：用 SM_CXCURSOR/SM_CYCURSOR + LoadImage 加载真实系统尺寸
+//   2. 预计算在后台线程执行，第 0 帧（峰值）同步计算后立即显示，
+//      其余帧异步补全，动画期间按需查表
+//   3. ApplyFrame 用原始 HCURSOR 副本传给 SetSystemCursor，无额外 CopyImage
+
 class CursorScaler {
 public:
-    // 程序启动时调用，快照所有标准系统光标的原始句柄副本（CopyImage）。
-    // 返回 true 表示至少成功捕获了一个光标。
-    bool CaptureCurrentCursors();
+    // 同步计算峰值帧（帧 0），立即可用；其余帧在后台线程异步计算
+    // 触发时调用，执行极快（只计算 1 帧），不阻塞主线程
+    bool PrepareAnimationAsync();
 
-    // 将每个已捕获的标准光标缩放到 factor 倍并替换系统光标。
-    // 若 SetSystemCursor 失败，静默记录调试信息并继续处理其余光标。
-    void ApplyScale(float factor);
+    // 按帧索引应用光标；若该帧尚未计算完成，使用已有最近帧
+    void ApplyFrame(int frameIndex);
 
-    // 通过 SystemParametersInfo(SPI_SETCURSORS) 将所有系统光标恢复为默认值。
+    // 把 factor 映射到帧索引
+    int FactorToFrame(float factor) const;
+
+    // 恢复系统光标，等待后台线程结束，清理所有缓存
     void RestoreCursors();
 
+    // 总帧数
+    int GetFrameCount() const { return ANIM_FRAMES; }
+
+    // 峰值帧是否准备好（同步完成）
+    bool IsReady() const { return m_peakReady.load(); }
+
+    static constexpr int ANIM_FRAMES = 60;
+
 private:
-    struct CursorEntry {
-        DWORD   cursorId;   // 系统光标 ID，如 OCR_NORMAL(32512)
-        HCURSOR original;   // CopyImage 副本，由本类负责 DestroyCursor
+    struct CursorInfo {
+        DWORD id;
+        int   w, h;
+        int   hotX, hotY;
+        HCURSOR orig;   // 真实尺寸原始句柄
     };
 
-    std::vector<CursorEntry> m_cursors;
+    struct AnimFrame {
+        float   factor  = 0.0f;
+        bool    ready   = false;
+        std::vector<HCURSOR> cursors;
+    };
 
-    // 将单个光标 src 缩放 factor 倍，返回新的 HCURSOR。
-    // 调用方（即 ApplyScale / SetSystemCursor）获取句柄所有权；
-    // 若缩放过程出错则返回 NULL。
-    HCURSOR ScaleCursor(HCURSOR src, float factor);
+    std::vector<CursorInfo> m_infos;
+    AnimFrame               m_frames[ANIM_FRAMES];
+    std::atomic<bool>       m_peakReady   { false };
+    std::atomic<bool>       m_stopWorker  { false };
+    HANDLE                  m_workerThread{ nullptr };
+
+    // 加载单个光标的真实尺寸句柄
+    HCURSOR LoadRealCursor(DWORD cursorId) const;
+
+    // 把 src 缩放到 targetW×targetH
+    HCURSOR ScaleCursorToSize(const CursorInfo& ci,
+                               int targetW, int targetH,
+                               int hotX, int hotY) const;
+
+    // 计算单帧（可在任何线程调用）
+    void ComputeFrame(int frameIndex);
+
+    // 清理所有帧缓存
+    void ClearFrameCache();
+
+    // 后台线程入口
+    static DWORD WINAPI WorkerThread(LPVOID param);
 };
