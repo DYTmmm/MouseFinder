@@ -1,0 +1,7 @@
+#include "resource.h"
+
+// ─── 图标资源 ─────────────────────────────────────────────────
+// IDI_TRAY  用于系统托盘图标（16x16）
+// IDI_APP   用于应用程序图标
+IDI_TRAY    ICON    "../assets/tray.ico"
+IDI_APP     ICON    "../assets/tray.ico"

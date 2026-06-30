@@ -1,0 +1,10 @@
+^F:\MY_PROJECTS\SHAKEPOINTER_V1\BUILD\CMAKEFILES\BDEF542524D0E1AA5D775768D112053F\GENERATE.STAMP.RULE
+setlocal
+F:\environment\bin\cmake.exe -SF:/my_projects/ShakePointer_v1 -BF:/my_projects/ShakePointer_v1/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file F:/my_projects/ShakePointer_v1/build/MouseFinder.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

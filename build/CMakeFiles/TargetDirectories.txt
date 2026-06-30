@@ -1,0 +1,4 @@
+F:/my_projects/ShakePointer_v1/build/CMakeFiles/MouseFinder.dir
+F:/my_projects/ShakePointer_v1/build/CMakeFiles/mouse_finder_tests.dir
+F:/my_projects/ShakePointer_v1/build/CMakeFiles/ALL_BUILD.dir
+F:/my_projects/ShakePointer_v1/build/CMakeFiles/ZERO_CHECK.dir
